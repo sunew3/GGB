@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__92f6d810-d9e5-4a52-b662-69014c528ebc__list_organizations",
+      "mcp__92f6d810-d9e5-4a52-b662-69014c528ebc__list_projects",
+      "mcp__92f6d810-d9e5-4a52-b662-69014c528ebc__get_project_url",
+      "mcp__92f6d810-d9e5-4a52-b662-69014c528ebc__get_publishable_keys",
+      "mcp__92f6d810-d9e5-4a52-b662-69014c528ebc__list_tables",
+      "mcp__Claude_Preview__preview_start",
+      "PowerShell(\\(Get-Command node\\).Source; \\(Get-Command npx\\).Source)"
+    ]
+  }
+}

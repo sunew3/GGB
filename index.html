@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>가계부</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --primary: #4f6ef7;
+    --income: #22c55e;
+    --expense: #ef4444;
+    --savings: #f59e0b;
+    --invest: #8b5cf6;
+    --text: #1e293b;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --radius: 12px;
+  }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  header {
+    background: var(--primary);
+    color: white;
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    box-shadow: 0 2px 8px rgba(79,110,247,.3);
+  }
+  header h1 { font-size: 1.4rem; font-weight: 700; }
+  header .subtitle { font-size: 0.85rem; opacity: .8; }
+  .db-status {
+    font-size: .78rem;
+    padding: 4px 10px;
+    border-radius: 99px;
+    background: rgba(255,255,255,.2);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .db-status .dot { width: 7px; height: 7px; border-radius: 50%; background: #86efac; }
+  .db-status .dot.error { background: #fca5a5; }
+  .db-status .dot.loading { background: #fde68a; animation: blink .8s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  nav {
+    background: white;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 0;
+    padding: 0 32px;
+  }
+  nav button {
+    padding: 14px 20px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--muted);
+    border-bottom: 3px solid transparent;
+    transition: all .2s;
+  }
+  nav button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 24px; }
+
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* Loading overlay */
+  .loading-overlay {
+    position: fixed; inset: 0;
+    background: rgba(244,246,251,.85);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 999;
+    flex-direction: column; gap: 12px;
+    font-size: .95rem; color: var(--muted);
+  }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Summary cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .card .label { font-size: .78rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+  .card .amount { font-size: 1.5rem; font-weight: 700; }
+  .card.income .amount { color: var(--income); }
+  .card.expense .amount { color: var(--expense); }
+  .card.savings .amount { color: var(--savings); }
+  .card.invest .amount { color: var(--invest); }
+  .card.total .amount { color: var(--primary); }
+
+  /* Form */
+  .form-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+    margin-bottom: 24px;
+  }
+  .form-card h2 { font-size: 1rem; font-weight: 700; margin-bottom: 16px; }
+  .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group label { font-size: .82rem; font-weight: 600; color: var(--muted); }
+  .form-group input, .form-group select {
+    padding: 9px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-size: .9rem;
+    outline: none;
+    transition: border-color .2s;
+    background: white;
+  }
+  .form-group input:focus, .form-group select:focus { border-color: var(--primary); }
+  .btn {
+    padding: 9px 20px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: .9rem;
+    font-weight: 600;
+    transition: opacity .2s;
+  }
+  .btn:hover { opacity: .85; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-danger { background: var(--expense); color: white; padding: 6px 12px; font-size: .78rem; }
+
+  /* Table */
+  .table-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+    margin-bottom: 24px;
+    overflow-x: auto;
+  }
+  .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+  .table-header h2 { font-size: 1rem; font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 10px 12px; font-size: .78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; border-bottom: 2px solid var(--border); }
+  td { padding: 11px 12px; font-size: .88rem; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #f8fafc; }
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 99px;
+    font-size: .75rem;
+    font-weight: 600;
+  }
+  .badge.income { background: #dcfce7; color: #16a34a; }
+  .badge.expense { background: #fee2e2; color: #dc2626; }
+  .badge.invest { background: #ede9fe; color: #7c3aed; }
+  .amount-income { color: var(--income); font-weight: 600; }
+  .amount-expense { color: var(--expense); font-weight: 600; }
+  .amount-invest { color: var(--invest); font-weight: 600; }
+
+  /* Charts */
+  .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+  @media (max-width: 768px) { .charts-grid { grid-template-columns: 1fr; } }
+  .chart-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .chart-card h2 { font-size: .95rem; font-weight: 700; margin-bottom: 16px; }
+  .chart-card.full { grid-column: 1 / -1; }
+
+  /* Filter bar */
+  .filter-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
+  .filter-bar select, .filter-bar input { padding: 8px 12px; border: 1.5px solid var(--border); border-radius: 8px; font-size: .88rem; background: white; outline: none; }
+  .filter-bar select:focus, .filter-bar input:focus { border-color: var(--primary); }
+
+  /* Empty state */
+  .empty { text-align: center; padding: 40px; color: var(--muted); font-size: .9rem; }
+
+  /* Trend table */
+  .trend-table { width: 100%; border-collapse: collapse; }
+  .trend-table th { text-align: right; padding: 8px 12px; font-size: .78rem; font-weight: 700; color: var(--muted); border-bottom: 2px solid var(--border); }
+  .trend-table th:first-child { text-align: left; }
+  .trend-table td { text-align: right; padding: 9px 12px; font-size: .85rem; border-bottom: 1px solid var(--border); }
+  .trend-table td:first-child { text-align: left; font-weight: 600; }
+  .savings-positive { color: var(--income); font-weight: 700; }
+  .savings-negative { color: var(--expense); font-weight: 700; }
+
+  .year-selector { display: flex; gap: 8px; align-items: center; }
+  .year-btn {
+    padding: 6px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    background: white;
+    cursor: pointer;
+    font-size: .85rem;
+    transition: all .2s;
+  }
+  .year-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+  .category-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: .75rem;
+    background: #f1f5f9;
+    color: var(--muted);
+  }
+
+  .savings-rate {
+    font-size: .75rem;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  /* Toast */
+  #toast {
+    position: fixed; bottom: 24px; right: 24px;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-size: .88rem;
+    font-weight: 600;
+    color: white;
+    z-index: 9999;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all .3s;
+    pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+  #toast.success { background: #22c55e; }
+  #toast.error { background: #ef4444; }
+</style>
+</head>
+<body>
+
+<div id="loading-overlay" class="loading-overlay">
+  <div class="spinner"></div>
+  <span>데이터 불러오는 중...</span>
+</div>
+
+<div id="toast"></div>
+
+<header>
+  <div>
+    <h1>💰 가계부</h1>
+    <div class="subtitle">수입·지출·저축 한눈에</div>
+  </div>
+  <div class="db-status">
+    <div class="dot loading" id="db-dot"></div>
+    <span id="db-label">연결 중...</span>
+  </div>
+</header>
+
+<nav>
+  <button class="active" onclick="showPage('dashboard', this)">대시보드</button>
+  <button onclick="showPage('entry', this)">내역 입력</button>
+  <button onclick="showPage('list', this)">내역 목록</button>
+  <button onclick="showPage('trends', this)">추이 분석</button>
+</nav>
+
+<main>
+  <!-- 대시보드 -->
+  <div id="page-dashboard" class="page active">
+    <div class="filter-bar">
+      <label style="font-weight:600;font-size:.88rem">기간:</label>
+      <select id="dash-year" onchange="renderDashboard()"></select>
+      <select id="dash-month" onchange="renderDashboard()">
+        <option value="">전체</option>
+        <option value="1">1월</option><option value="2">2월</option><option value="3">3월</option>
+        <option value="4">4월</option><option value="5">5월</option><option value="6">6월</option>
+        <option value="7">7월</option><option value="8">8월</option><option value="9">9월</option>
+        <option value="10">10월</option><option value="11">11월</option><option value="12">12월</option>
+      </select>
+    </div>
+    <div class="cards">
+      <div class="card income"><div class="label">총 수입</div><div class="amount" id="d-income">₩0</div></div>
+      <div class="card expense"><div class="label">총 지출</div><div class="amount" id="d-expense">₩0</div></div>
+      <div class="card savings"><div class="label">순 저축</div><div class="amount" id="d-savings">₩0</div><div class="savings-rate" id="d-rate"></div></div>
+      <div class="card invest"><div class="label">총 투자</div><div class="amount" id="d-invest">₩0</div><div class="savings-rate" id="d-invest-rate"></div></div>
+      <div class="card total"><div class="label">거래 건수</div><div class="amount" id="d-count">0건</div></div>
+    </div>
+    <div class="charts-grid">
+      <div class="chart-card"><h2>월별 수입 · 지출</h2><canvas id="chart-monthly"></canvas></div>
+      <div class="chart-card"><h2>카테고리별 지출</h2><canvas id="chart-category"></canvas></div>
+      <div class="chart-card full"><h2>저축액 추이</h2><canvas id="chart-savings"></canvas></div>
+    </div>
+  </div>
+
+  <!-- 내역 입력 -->
+  <div id="page-entry" class="page">
+    <div class="form-card">
+      <h2>새 내역 추가</h2>
+      <div class="form-row">
+        <div class="form-group">
+          <label>구분</label>
+          <select id="f-type" onchange="updateCategories()">
+            <option value="income">수입</option>
+            <option value="expense">지출</option>
+            <option value="invest">투자</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>날짜</label>
+          <input type="date" id="f-date">
+        </div>
+        <div class="form-group">
+          <label>카테고리</label>
+          <select id="f-category">
+            <option value="급여">급여</option>
+            <option value="부업">부업</option>
+            <option value="배당/이자">배당/이자</option>
+            <option value="기타수입">기타수입</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>금액 (원)</label>
+          <input type="number" id="f-amount" placeholder="0" min="0" style="width:150px">
+        </div>
+        <div class="form-group" style="flex:1;min-width:200px">
+          <label>메모</label>
+          <input type="text" id="f-memo" placeholder="메모 (선택)">
+        </div>
+        <div class="form-group">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" id="add-btn" onclick="addEntry()">추가</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-card" style="padding:20px 24px">
+      <h2 style="margin-bottom:12px">빠른 입력 팁</h2>
+      <ul style="color:var(--muted);font-size:.85rem;line-height:2;padding-left:18px">
+        <li>구분에서 수입/지출을 선택하면 카테고리가 해당 항목으로 변경됩니다.</li>
+        <li>추이 분석 탭에서 연도별·월별 저축 흐름을 확인할 수 있습니다.</li>
+        <li>데이터는 Supabase 클라우드 DB에 저장됩니다.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 내역 목록 -->
+  <div id="page-list" class="page">
+    <div class="table-card">
+      <div class="table-header">
+        <h2>전체 내역</h2>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <select id="list-year" onchange="renderList()"></select>
+          <select id="list-month" onchange="renderList()">
+            <option value="">전체 월</option>
+            <option value="1">1월</option><option value="2">2월</option><option value="3">3월</option>
+            <option value="4">4월</option><option value="5">5월</option><option value="6">6월</option>
+            <option value="7">7월</option><option value="8">8월</option><option value="9">9월</option>
+            <option value="10">10월</option><option value="11">11월</option><option value="12">12월</option>
+          </select>
+          <select id="list-type" onchange="renderList()">
+            <option value="">전체</option>
+            <option value="income">수입</option>
+            <option value="expense">지출</option>
+            <option value="invest">투자</option>
+          </select>
+          <button class="btn" style="background:#f1f5f9;color:var(--muted)" onclick="clearAll()">전체 삭제</button>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>날짜</th>
+            <th>구분</th>
+            <th>카테고리</th>
+            <th>메모</th>
+            <th style="text-align:right">금액</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="list-tbody"></tbody>
+      </table>
+      <div id="list-empty" class="empty" style="display:none">내역이 없습니다.</div>
+    </div>
+  </div>
+
+  <!-- 추이 분석 -->
+  <div id="page-trends" class="page">
+    <div class="filter-bar">
+      <label style="font-weight:600;font-size:.88rem">연도:</label>
+      <div class="year-selector" id="trend-years"></div>
+    </div>
+    <div class="charts-grid">
+      <div class="chart-card full"><h2>월별 수입 · 지출 추이</h2><canvas id="chart-trend-monthly"></canvas></div>
+      <div class="chart-card full"><h2>월별 저축액 & 저축률 추이</h2><canvas id="chart-trend-savings"></canvas></div>
+      <div class="chart-card full"><h2>월별 투자 금액 추이</h2><canvas id="chart-trend-invest"></canvas></div>
+    </div>
+    <div class="table-card">
+      <div class="table-header"><h2>월별 요약표</h2></div>
+      <table class="trend-table">
+        <thead>
+          <tr>
+            <th>월</th>
+            <th>수입</th>
+            <th>지출</th>
+            <th>투자</th>
+            <th>저축액</th>
+            <th>저축률</th>
+          </tr>
+        </thead>
+        <tbody id="trend-tbody"></tbody>
+        <tfoot id="trend-tfoot"></tfoot>
+      </table>
+    </div>
+
+    <div class="table-card" style="margin-top:0">
+      <div class="table-header"><h2>연도별 요약</h2></div>
+      <table class="trend-table">
+        <thead>
+          <tr>
+            <th>연도</th>
+            <th>수입</th>
+            <th>지출</th>
+            <th>투자</th>
+            <th>저축액</th>
+            <th>저축률</th>
+          </tr>
+        </thead>
+        <tbody id="yearly-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+// ─── Supabase 초기화 ───────────────────────────────────────────
+const SUPABASE_URL = 'https://sribivksnarymdkiuvya.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyaWJpdmtzbmFyeW1ka2l1dnlhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzNDU1ODUsImV4cCI6MjA5NzkyMTU4NX0.k83dYxqD621YtfhSzuXJZ0MenVAH8cHxUAQy4YxaVms';
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ─── 상태 ─────────────────────────────────────────────────────
+let entries = [];
+let dbConnected = false;
+
+function setDbStatus(state) {
+  const dot = document.getElementById('db-dot');
+  const label = document.getElementById('db-label');
+  if (state === 'ok') { dot.className = 'dot'; label.textContent = 'DB 연결됨'; dot.style.background = '#86efac'; }
+  else if (state === 'error') { dot.className = 'dot error'; label.textContent = 'DB 오류'; dot.style.background = '#fca5a5'; }
+  else { dot.className = 'dot loading'; label.textContent = '연결 중...'; dot.style.background = '#fde68a'; }
+}
+
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `show ${type}`;
+  setTimeout(() => { t.className = ''; }, 2500);
+}
+
+// ─── DB CRUD ──────────────────────────────────────────────────
+async function loadEntries() {
+  const { data, error } = await db.from('entries').select('*').order('date', { ascending: false });
+  if (error) throw error;
+  return data.map(r => ({ ...r, amount: Number(r.amount) }));
+}
+
+async function insertEntry(entry) {
+  const { data, error } = await db.from('entries').insert([entry]).select().single();
+  if (error) throw error;
+  return { ...data, amount: Number(data.amount) };
+}
+
+async function deleteEntryById(id) {
+  const { error } = await db.from('entries').delete().eq('id', id);
+  if (error) throw error;
+}
+
+async function deleteAllEntries() {
+  const { error } = await db.from('entries').delete().neq('id', 0);
+  if (error) throw error;
+}
+
+// ─── 카테고리 ──────────────────────────────────────────────────
+const incomeCategories = ['급여','부업','배당/이자','기타수입'];
+const expenseCategories = ['식비','교통','주거','의료','쇼핑','문화/여가','교육','통신','구독','기타지출'];
+const investCategories = ['주식','ETF','펀드','부동산','코인','기타투자'];
+
+function updateCategories() {
+  const type = document.getElementById('f-type').value;
+  const sel = document.getElementById('f-category');
+  const cats = type === 'income' ? incomeCategories : type === 'invest' ? investCategories : expenseCategories;
+  sel.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
+}
+
+// ─── 네비게이션 ───────────────────────────────────────────────
+function showPage(name, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+  if (name === 'dashboard') renderDashboard();
+  if (name === 'list') renderList();
+  if (name === 'trends') renderTrends();
+}
+
+// ─── 연도 헬퍼 ────────────────────────────────────────────────
+function getYears() {
+  const y = new Set(entries.map(e => new Date(e.date).getFullYear()));
+  y.add(new Date().getFullYear());
+  return [...y].sort((a, b) => a - b);
+}
+
+function populateYearSelect(id) {
+  const sel = document.getElementById(id);
+  const cur = parseInt(sel.value) || new Date().getFullYear();
+  const years = getYears();
+  sel.innerHTML = years.map(y => `<option value="${y}" ${y == cur ? 'selected' : ''}>${y}년</option>`).join('');
+}
+
+// ─── 추가 ─────────────────────────────────────────────────────
+async function addEntry() {
+  const btn = document.getElementById('add-btn');
+  const type = document.getElementById('f-type').value;
+  const date = document.getElementById('f-date').value;
+  const category = document.getElementById('f-category').value;
+  const amount = parseFloat(document.getElementById('f-amount').value);
+  const memo = document.getElementById('f-memo').value.trim();
+
+  if (!date) { showToast('날짜를 선택해주세요.', 'error'); return; }
+  if (!amount || amount <= 0) { showToast('금액을 입력해주세요.', 'error'); return; }
+
+  btn.disabled = true;
+  btn.textContent = '저장 중...';
+  try {
+    const row = await insertEntry({ type, date, category, amount, memo });
+    entries.unshift(row);
+    document.getElementById('f-amount').value = '';
+    document.getElementById('f-memo').value = '';
+    showToast('추가되었습니다!');
+  } catch (e) {
+    showToast('저장 실패: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '추가';
+  }
+}
+
+// ─── 삭제 ─────────────────────────────────────────────────────
+async function deleteEntry(id) {
+  if (!confirm('삭제하시겠습니까?')) return;
+  try {
+    await deleteEntryById(id);
+    entries = entries.filter(e => e.id !== id);
+    renderList();
+    showToast('삭제되었습니다.');
+  } catch (e) {
+    showToast('삭제 실패: ' + e.message, 'error');
+  }
+}
+
+async function clearAll() {
+  if (!confirm('전체 내역을 삭제하시겠습니까?')) return;
+  try {
+    await deleteAllEntries();
+    entries = [];
+    renderList();
+    showToast('전체 삭제되었습니다.');
+  } catch (e) {
+    showToast('삭제 실패: ' + e.message, 'error');
+  }
+}
+
+// ─── 포맷 ─────────────────────────────────────────────────────
+function fmt(n) { return '₩' + Math.abs(n).toLocaleString('ko-KR'); }
+function fmtRaw(n) { return n.toLocaleString('ko-KR'); }
+
+// ─── 대시보드 ─────────────────────────────────────────────────
+let chartMonthly, chartCategory, chartSavings;
+
+function renderDashboard() {
+  populateYearSelect('dash-year');
+  const year = parseInt(document.getElementById('dash-year').value);
+  const monthVal = document.getElementById('dash-month').value;
+  const month = monthVal ? parseInt(monthVal) : null;
+
+  const filtered = entries.filter(e => {
+    const d = new Date(e.date);
+    return d.getFullYear() === year && (month === null || d.getMonth() + 1 === month);
+  });
+
+  const income = filtered.filter(e => e.type === 'income').reduce((s, e) => s + e.amount, 0);
+  const expense = filtered.filter(e => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+  const invest = filtered.filter(e => e.type === 'invest').reduce((s, e) => s + e.amount, 0);
+  const savings = income - expense;
+  const rate = income > 0 ? (savings / income * 100).toFixed(1) : 0;
+  const investRate = income > 0 ? (invest / income * 100).toFixed(1) : 0;
+
+  document.getElementById('d-income').textContent = fmt(income);
+  document.getElementById('d-expense').textContent = fmt(expense);
+  document.getElementById('d-savings').textContent = (savings >= 0 ? '' : '-') + fmt(savings);
+  document.getElementById('d-savings').style.color = savings >= 0 ? 'var(--income)' : 'var(--expense)';
+  document.getElementById('d-rate').textContent = `저축률 ${rate}%`;
+  document.getElementById('d-invest').textContent = fmt(invest);
+  document.getElementById('d-invest-rate').textContent = `수입 대비 ${investRate}%`;
+  document.getElementById('d-count').textContent = filtered.length + '건';
+
+  const months = Array.from({ length: 12 }, (_, i) => i + 1);
+  const mIncome = months.map(m => entries.filter(e => new Date(e.date).getFullYear() === year && new Date(e.date).getMonth() + 1 === m && e.type === 'income').reduce((s, e) => s + e.amount, 0));
+  const mExpense = months.map(m => entries.filter(e => new Date(e.date).getFullYear() === year && new Date(e.date).getMonth() + 1 === m && e.type === 'expense').reduce((s, e) => s + e.amount, 0));
+
+  if (chartMonthly) chartMonthly.destroy();
+  chartMonthly = new Chart(document.getElementById('chart-monthly'), {
+    type: 'bar',
+    data: {
+      labels: months.map(m => m + '월'),
+      datasets: [
+        { label: '수입', data: mIncome, backgroundColor: 'rgba(34,197,94,.7)', borderRadius: 6 },
+        { label: '지출', data: mExpense, backgroundColor: 'rgba(239,68,68,.7)', borderRadius: 6 }
+      ]
+    },
+    options: { responsive: true, plugins: { legend: { position: 'top' } }, scales: { y: { beginAtZero: true, ticks: { callback: v => '₩' + v.toLocaleString('ko-KR') } } } }
+  });
+
+  const catMap = {};
+  filtered.filter(e => e.type === 'expense').forEach(e => { catMap[e.category] = (catMap[e.category] || 0) + e.amount; });
+  const catLabels = Object.keys(catMap);
+  const catVals = Object.values(catMap);
+  const palette = ['#4f6ef7', '#22c55e', '#ef4444', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#14b8a6'];
+
+  if (chartCategory) chartCategory.destroy();
+  if (catLabels.length === 0) {
+    chartCategory = new Chart(document.getElementById('chart-category'), { type: 'doughnut', data: { labels: ['데이터 없음'], datasets: [{ data: [1], backgroundColor: ['#e2e8f0'] }] }, options: { plugins: { legend: { display: false } } } });
+  } else {
+    chartCategory = new Chart(document.getElementById('chart-category'), {
+      type: 'doughnut',
+      data: { labels: catLabels, datasets: [{ data: catVals, backgroundColor: palette.slice(0, catLabels.length), borderWidth: 2 }] },
+      options: { responsive: true, plugins: { legend: { position: 'right' }, tooltip: { callbacks: { label: ctx => `${ctx.label}: ₩${ctx.raw.toLocaleString('ko-KR')}` } } } }
+    });
+  }
+
+  const mSavings = months.map((m, i) => mIncome[i] - mExpense[i]);
+  const cumSavings = mSavings.reduce((acc, v, i) => { acc.push((acc[i - 1] || 0) + v); return acc; }, []);
+
+  if (chartSavings) chartSavings.destroy();
+  chartSavings = new Chart(document.getElementById('chart-savings'), {
+    type: 'line',
+    data: {
+      labels: months.map(m => m + '월'),
+      datasets: [
+        { label: '월 저축액', data: mSavings, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.1)', tension: .4, fill: true, pointRadius: 5 },
+        { label: '누적 저축액', data: cumSavings, borderColor: '#4f6ef7', backgroundColor: 'rgba(79,110,247,.05)', tension: .4, fill: true, pointRadius: 5, borderDash: [5, 3] }
+      ]
+    },
+    options: { responsive: true, plugins: { legend: { position: 'top' } }, scales: { y: { ticks: { callback: v => '₩' + v.toLocaleString('ko-KR') } } } }
+  });
+}
+
+// ─── 목록 ─────────────────────────────────────────────────────
+function renderList() {
+  populateYearSelect('list-year');
+  const year = parseInt(document.getElementById('list-year').value);
+  const monthVal = document.getElementById('list-month').value;
+  const typeVal = document.getElementById('list-type').value;
+  const month = monthVal ? parseInt(monthVal) : null;
+
+  const filtered = entries.filter(e => {
+    const d = new Date(e.date);
+    return d.getFullYear() === year && (month === null || d.getMonth() + 1 === month) && (!typeVal || e.type === typeVal);
+  }).sort((a, b) => b.date.localeCompare(a.date));
+
+  const tbody = document.getElementById('list-tbody');
+  const empty = document.getElementById('list-empty');
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  const typeLabel = { income: '수입', expense: '지출', invest: '투자' };
+  tbody.innerHTML = filtered.map(e => `
+    <tr>
+      <td>${e.date}</td>
+      <td><span class="badge ${e.type}">${typeLabel[e.type]}</span></td>
+      <td><span class="category-tag">${e.category}</span></td>
+      <td style="color:var(--muted)">${e.memo || '-'}</td>
+      <td style="text-align:right" class="amount-${e.type}">${e.type === 'income' ? '+' : '-'}${fmtRaw(e.amount)}</td>
+      <td><button class="btn btn-danger" onclick="deleteEntry(${e.id})">삭제</button></td>
+    </tr>
+  `).join('');
+}
+
+// ─── 추이 분석 ────────────────────────────────────────────────
+let chartTrendMonthly, chartTrendSavings, chartTrendInvest;
+let selectedTrendYear = new Date().getFullYear();
+
+function renderTrends() {
+  const years = getYears();
+  document.getElementById('trend-years').innerHTML = years.map(y =>
+    `<button class="year-btn ${y === selectedTrendYear ? 'active' : ''}" onclick="selectTrendYear(${y})">${y}년</button>`
+  ).join('');
+
+  const year = selectedTrendYear;
+  const months = Array.from({ length: 12 }, (_, i) => i + 1);
+  const mIncome = months.map(m => entries.filter(e => new Date(e.date).getFullYear() === year && new Date(e.date).getMonth() + 1 === m && e.type === 'income').reduce((s, e) => s + e.amount, 0));
+  const mExpense = months.map(m => entries.filter(e => new Date(e.date).getFullYear() === year && new Date(e.date).getMonth() + 1 === m && e.type === 'expense').reduce((s, e) => s + e.amount, 0));
+  const mInvest = months.map(m => entries.filter(e => new Date(e.date).getFullYear() === year && new Date(e.date).getMonth() + 1 === m && e.type === 'invest').reduce((s, e) => s + e.amount, 0));
+  const mSavings = months.map((m, i) => mIncome[i] - mExpense[i]);
+  const mRate = months.map((m, i) => mIncome[i] > 0 ? parseFloat((mSavings[i] / mIncome[i] * 100).toFixed(1)) : 0);
+
+  if (chartTrendMonthly) chartTrendMonthly.destroy();
+  chartTrendMonthly = new Chart(document.getElementById('chart-trend-monthly'), {
+    type: 'bar',
+    data: {
+      labels: months.map(m => m + '월'),
+      datasets: [
+        { label: '수입', data: mIncome, backgroundColor: 'rgba(34,197,94,.7)', borderRadius: 6 },
+        { label: '지출', data: mExpense, backgroundColor: 'rgba(239,68,68,.7)', borderRadius: 6 }
+      ]
+    },
+    options: { responsive: true, plugins: { legend: { position: 'top' } }, scales: { y: { beginAtZero: true, ticks: { callback: v => '₩' + v.toLocaleString('ko-KR') } } } }
+  });
+
+  if (chartTrendSavings) chartTrendSavings.destroy();
+  chartTrendSavings = new Chart(document.getElementById('chart-trend-savings'), {
+    type: 'bar',
+    data: {
+      labels: months.map(m => m + '월'),
+      datasets: [
+        { type: 'bar', label: '저축액', data: mSavings, backgroundColor: mSavings.map(v => v >= 0 ? 'rgba(34,197,94,.7)' : 'rgba(239,68,68,.7)'), borderRadius: 6, yAxisID: 'y' },
+        { type: 'line', label: '저축률(%)', data: mRate, borderColor: '#4f6ef7', backgroundColor: 'transparent', tension: .4, pointRadius: 5, yAxisID: 'y1' }
+      ]
+    },
+    options: {
+      responsive: true, plugins: { legend: { position: 'top' } },
+      scales: {
+        y: { beginAtZero: false, ticks: { callback: v => '₩' + v.toLocaleString('ko-KR') } },
+        y1: { position: 'right', ticks: { callback: v => v + '%' }, grid: { drawOnChartArea: false } }
+      }
+    }
+  });
+
+  if (chartTrendInvest) chartTrendInvest.destroy();
+  chartTrendInvest = new Chart(document.getElementById('chart-trend-invest'), {
+    type: 'bar',
+    data: {
+      labels: months.map(m => m + '월'),
+      datasets: [{ label: '투자', data: mInvest, backgroundColor: 'rgba(139,92,246,.7)', borderRadius: 6 }]
+    },
+    options: { responsive: true, plugins: { legend: { position: 'top' } }, scales: { y: { beginAtZero: true, ticks: { callback: v => '₩' + v.toLocaleString('ko-KR') } } } }
+  });
+
+  const tbody = document.getElementById('trend-tbody');
+  let totalIncome = 0, totalExpense = 0, totalInvest = 0;
+  tbody.innerHTML = months.map((m, i) => {
+    totalIncome += mIncome[i];
+    totalExpense += mExpense[i];
+    totalInvest += mInvest[i];
+    const s = mSavings[i], r = mRate[i];
+    const hasData = mIncome[i] > 0 || mExpense[i] > 0 || mInvest[i] > 0;
+    if (!hasData) return `<tr><td>${m}월</td><td style="color:var(--border)">-</td><td style="color:var(--border)">-</td><td style="color:var(--border)">-</td><td style="color:var(--border)">-</td><td style="color:var(--border)">-</td></tr>`;
+    return `<tr>
+      <td>${m}월</td>
+      <td style="color:var(--income)">₩${fmtRaw(mIncome[i])}</td>
+      <td style="color:var(--expense)">₩${fmtRaw(mExpense[i])}</td>
+      <td style="color:var(--invest)">₩${fmtRaw(mInvest[i])}</td>
+      <td class="${s >= 0 ? 'savings-positive' : 'savings-negative'}">${s >= 0 ? '' : '-'}₩${fmtRaw(Math.abs(s))}</td>
+      <td class="${r >= 0 ? 'savings-positive' : 'savings-negative'}">${r}%</td>
+    </tr>`;
+  }).join('');
+
+  const ts = totalIncome - totalExpense;
+  const tr = totalIncome > 0 ? (ts / totalIncome * 100).toFixed(1) : 0;
+  document.getElementById('trend-tfoot').innerHTML = `
+    <tr style="border-top:2px solid var(--border);font-weight:700">
+      <td>합계</td>
+      <td style="color:var(--income)">₩${fmtRaw(totalIncome)}</td>
+      <td style="color:var(--expense)">₩${fmtRaw(totalExpense)}</td>
+      <td style="color:var(--invest)">₩${fmtRaw(totalInvest)}</td>
+      <td class="${ts >= 0 ? 'savings-positive' : 'savings-negative'}">${ts >= 0 ? '' : '-'}₩${fmtRaw(Math.abs(ts))}</td>
+      <td class="${tr >= 0 ? 'savings-positive' : 'savings-negative'}">${tr}%</td>
+    </tr>`;
+
+  const allYears = getYears();
+  document.getElementById('yearly-tbody').innerHTML = allYears.map(y => {
+    const yi = entries.filter(e => new Date(e.date).getFullYear() === y && e.type === 'income').reduce((s, e) => s + e.amount, 0);
+    const ye = entries.filter(e => new Date(e.date).getFullYear() === y && e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+    const yv = entries.filter(e => new Date(e.date).getFullYear() === y && e.type === 'invest').reduce((s, e) => s + e.amount, 0);
+    const ys = yi - ye;
+    const yr = yi > 0 ? (ys / yi * 100).toFixed(1) : 0;
+    return `<tr>
+      <td>${y}년</td>
+      <td style="color:var(--income)">₩${fmtRaw(yi)}</td>
+      <td style="color:var(--expense)">₩${fmtRaw(ye)}</td>
+      <td style="color:var(--invest)">₩${fmtRaw(yv)}</td>
+      <td class="${ys >= 0 ? 'savings-positive' : 'savings-negative'}">${ys >= 0 ? '' : '-'}₩${fmtRaw(Math.abs(ys))}</td>
+      <td class="${yr >= 0 ? 'savings-positive' : 'savings-negative'}">${yr}%</td>
+    </tr>`;
+  }).join('');
+}
+
+function selectTrendYear(y) {
+  selectedTrendYear = y;
+  renderTrends();
+}
+
+// ─── 초기화 ───────────────────────────────────────────────────
+(async function init() {
+  document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+  setDbStatus('loading');
+
+  try {
+    entries = await loadEntries();
+    dbConnected = true;
+    setDbStatus('ok');
+  } catch (e) {
+    setDbStatus('error');
+    showToast('DB 연결 실패: ' + e.message, 'error');
+  }
+
+  document.getElementById('loading-overlay').style.display = 'none';
+  populateYearSelect('dash-year');
+  renderDashboard();
+})();
+</script>
+</body>
+</html>
